@@ -1,6 +1,6 @@
 // src/cronjobs.ts (or your file)
 import { Context } from "hono";
-import { getPrisma } from "./prisma";
+import { getPrisma } from "../prisma";
 import { PrismaClient, Token_Metrics } from "@prisma/client"; // Import PrismaClient and generated types
 
 // --- Placeholder for Email Sending ---

@@ -2,7 +2,17 @@ import { Hono } from "hono";
 import { cors } from "hono/cors"; // Import cors middleware
 import { logger } from "hono/logger"; // Optional: Add logger middleware
 import { getPrisma } from "./prisma"; // Your Prisma client setup
-import { dbupdate } from "./cronjobs"; // Your existing cron job import
+import { dbupdate } from "./cronjobs/cronjobs"; // Your existing cron job import
+import { deleteAlert, getAlertByMint, getAlertByUserEmail, getAlerts, makeAlert, updateAlert } from "./alerts";
+
+// Import the tokenomics functions
+import { 
+    getPriceHistory, 
+    getLiquidityHistory, 
+    getHolderHistory, 
+    getTopHolders, 
+    getLiquidityLockInfo 
+} from './tokenomics';
 
 // --- Simple In-Memory Cache for Report Summary ---
 // NOTE: For production, consider a more robust solution like Redis or Memcached.
@@ -28,6 +38,12 @@ app.use("*", cors()); // Enable CORS for frontend access
 // --- Existing Routes ---
 app.get("/", (c) => c.text("RugCheck Backend is running!"));
 app.get("/cron/poll", dbupdate); // Your existing cron endpoint
+app.post("/alert/new", makeAlert);
+app.get("/alert/get", getAlerts);
+app.delete("/alert/delete", deleteAlert);
+app.put("/alert/update", updateAlert);
+app.get("/alert/getbyuseremail", getAlertByUserEmail);
+app.get("/alert/getbymint", getAlertByMint);
 
 // --- New Endpoints ---
 
@@ -93,201 +109,11 @@ app.get("/tokens/:mint/report/summary", async (c) => {
 
 // --- Tokenomics Visualization Endpoints ---
 
-const DEFAULT_LIMIT = 100; // Default number of data points for historical charts
-
-// 2. Price History
-app.get("/tokens/:mint/visualizations/price", async (c) => {
-    const mint = c.req.param("mint");
-    const limit = parseInt(c.req.query("limit") || `${DEFAULT_LIMIT}`, 10);
-    const offset = parseInt(c.req.query("offset") || "0", 10);
-
-    if (!mint) return c.json({ error: "Mint address is required" }, 400);
-
-    const prisma = getPrisma(c.env.DATABASE_URL);
-    try {
-        const priceData = await prisma.token_Metrics.findMany({
-            where: { mint: mint },
-            select: {
-                // Select only necessary fields
-                timestamp: true,
-                price: true,
-            },
-            orderBy: { timestamp: "desc" }, // Get latest first
-            take: limit,
-            skip: offset,
-        });
-        // Reverse to get chronological order for charts if needed by frontend
-        return c.json(priceData.reverse());
-    } catch (error) {
-        console.error(`Error fetching price data for ${mint}:`, error);
-        return c.json(
-            { error: "Internal server error fetching price data" },
-            500,
-        );
-    }
-});
-
-// 3. Liquidity History (Total Market Liquidity)
-app.get("/tokens/:mint/visualizations/liquidity", async (c) => {
-    const mint = c.req.param("mint");
-    const limit = parseInt(c.req.query("limit") || `${DEFAULT_LIMIT}`, 10);
-    const offset = parseInt(c.req.query("offset") || "0", 10);
-
-    if (!mint) return c.json({ error: "Mint address is required" }, 400);
-
-    const prisma = getPrisma(c.env.DATABASE_URL);
-    try {
-        const liquidityData = await prisma.token_Metrics.findMany({
-            where: { mint: mint },
-            select: {
-                timestamp: true,
-                totalMarketLiquidity: true,
-            },
-            orderBy: { timestamp: "desc" },
-            take: limit,
-            skip: offset,
-        });
-        return c.json(liquidityData.reverse());
-    } catch (error) {
-        console.error(`Error fetching liquidity data for ${mint}:`, error);
-        return c.json(
-            { error: "Internal server error fetching liquidity data" },
-            500,
-        );
-    }
-});
-
-// 4. Holder Count History
-app.get("/tokens/:mint/visualizations/holders", async (c) => {
-    const mint = c.req.param("mint");
-    const limit = parseInt(c.req.query("limit") || `${DEFAULT_LIMIT}`, 10);
-    const offset = parseInt(c.req.query("offset") || "0", 10);
-
-    if (!mint) return c.json({ error: "Mint address is required" }, 400);
-
-    const prisma = getPrisma(c.env.DATABASE_URL);
-    try {
-        const holderData = await prisma.token_Metrics.findMany({
-            where: { mint: mint },
-            select: {
-                timestamp: true,
-                totalHolders: true,
-            },
-            orderBy: { timestamp: "desc" },
-            take: limit,
-            skip: offset,
-        });
-        // Convert BigInt to string for JSON compatibility if necessary
-        const responseData = holderData.map((d) => ({
-            ...d,
-            totalHolders: d.totalHolders?.toString() ?? null,
-        }));
-        return c.json(responseData.reverse());
-    } catch (error) {
-        console.error(`Error fetching holder data for ${mint}:`, error);
-        return c.json(
-            { error: "Internal server error fetching holder data" },
-            500,
-        );
-    }
-});
-
-// 5. Latest Top Holders Snapshot (Example: Top 5)
-app.get("/tokens/:mint/visualizations/top-holders", async (c) => {
-    const mint = c.req.param("mint");
-    if (!mint) return c.json({ error: "Mint address is required" }, 400);
-
-    const prisma = getPrisma(c.env.DATABASE_URL);
-    try {
-        // Find the latest timestamp for which we have holder data for this mint
-        const latestEntry = await prisma.holder_Movements.findFirst({
-            where: { mint: mint },
-            orderBy: { timestamp: "desc" },
-            select: { timestamp: true },
-        });
-
-        if (!latestEntry) {
-            return c.json([]); // No data found
-        }
-
-        // Get all holder entries matching the latest timestamp
-        const topHolders = await prisma.holder_Movements.findMany({
-            where: {
-                mint: mint,
-                timestamp: latestEntry.timestamp, // Filter by the exact latest timestamp
-            },
-            select: {
-                address: true,
-                amount: true,
-                pct: true,
-                insider: true,
-            },
-            orderBy: {
-                // You might need BigInt support or cast to numeric in DB for proper sorting
-                // Or sort based on 'pct' which is Float
-                pct: "desc", // Order by percentage held
-            },
-            take: 5, // Get the top 5 based on DB data structure (already sliced in cron)
-        });
-
-        // Convert BigInt to string
-        const responseData = topHolders.map((h) => ({
-            ...h,
-            amount: h.amount?.toString() ?? null,
-        }));
-
-        return c.json(responseData);
-    } catch (error) {
-        console.error(`Error fetching top holders for ${mint}:`, error);
-        return c.json(
-            { error: "Internal server error fetching top holders" },
-            500,
-        );
-    }
-});
-
-// 6. Latest Liquidity Lock Info
-app.get("/tokens/:mint/visualizations/liquidity-lock", async (c) => {
-    const mint = c.req.param("mint");
-    if (!mint) return c.json({ error: "Mint address is required" }, 400);
-
-    const prisma = getPrisma(c.env.DATABASE_URL);
-    try {
-        const latestLiquidityInfo = await prisma.liquidity_Events.findFirst({
-            where: { mint: mint },
-            orderBy: { timestamp: "desc" },
-            select: {
-                timestamp: true,
-                market_pubkey: true,
-                lpLocked: true,
-                lpLockedPct: true,
-                usdcLocked: true,
-                unlockDate: true,
-            },
-        });
-
-        if (!latestLiquidityInfo) {
-            return c.json(
-                { message: "No liquidity event data found for this mint." },
-                404,
-            );
-        }
-
-        // Convert BigInts to strings
-        const responseData = {
-            ...latestLiquidityInfo,
-            lpLocked: latestLiquidityInfo.lpLocked?.toString() ?? null,
-            unlockDate: latestLiquidityInfo.unlockDate?.toString() ?? null,
-        };
-
-        return c.json(responseData);
-    } catch (error) {
-        console.error(`Error fetching liquidity lock info for ${mint}:`, error);
-        return c.json(
-            { error: "Internal server error fetching liquidity lock info" },
-            500,
-        );
-    }
-});
+// Replace the existing tokenomics routes with:
+app.get("/tokens/:mint/visualizations/price", getPriceHistory);
+app.get("/tokens/:mint/visualizations/liquidity", getLiquidityHistory);
+app.get("/tokens/:mint/visualizations/holders", getHolderHistory);
+app.get("/tokens/:mint/visualizations/top-holders", getTopHolders);
+app.get("/tokens/:mint/visualizations/liquidity-lock", getLiquidityLockInfo);
 
 export default app;
