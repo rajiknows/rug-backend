@@ -1,0 +1,13 @@
+name = "rugcheck-backend"
+main = "src/index.ts"
+compatibility_date = "2025-04-06"
+
+[env.production]
+[env.production.vars]
+
+DATABASE_URL = "prisma+postgres://accelerate.prisma-data.net/?api_key=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcGlfa2V5IjoiZTMzZGJiMDQtZGRmMi00ZTc4LWExZGEtYmJjODc2OTU3ZTQ5IiwidGVuYW50X2lkIjoiZjNkMmNlNGZjZjk2NTgwMTczNDdiMTUwYjUzMWVlOGUyNzNkZmJkNjY0NGYzNTlmZGZhMzJiN2VkMDQ3N2ZiZSIsImludGVybmFsX3NlY3JldCI6IjU3ZTRiOTE2LTQ4YjgtNDkxYy05MGM2LWI2MWZiMWZiYTNmMiJ9.t8ybWXAC1CQwJJLWhzF5cuEFzewN_gGWWGLlyFv3HZ4"
+# DATABASE_URL = "postgres://postgres:password@localhost:5432/postgres"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["*/10 * * * *"] # Every 10 minutes

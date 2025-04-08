@@ -1,0 +1,79 @@
+// prisma/schema.prisma
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+model Token_Metrics {
+    timestamp            DateTime @default(now()) @db.Timestamptz
+    mint                 String   @db.Text
+    price                Float?
+    totalMarketLiquidity Float?
+    totalHolders         BigInt?
+    score                Int?
+    score_normalised     Float?
+    upvotes              Int?
+    downvotes            Int?
+
+    @@id([timestamp, mint]) // Composite primary key
+    @@index([mint, timestamp(sort: Desc)]) // Index for efficient historical data lookups
+}
+
+model Holder_Movements {
+    timestamp DateTime @default(now()) @db.Timestamptz
+    mint      String   @db.Text
+    address   String   @db.Text
+    amount    BigInt?
+    pct       Float?
+    insider   Boolean?
+
+    @@id([timestamp, mint, address])
+    @@index([mint, timestamp(sort: Desc)])
+}
+
+model Liquidity_Events {
+    timestamp     DateTime @default(now()) @db.Timestamptz
+    mint          String   @db.Text
+    market_pubkey String   @db.Text
+    lpLocked      BigInt?
+    lpLockedPct   Float?
+    usdcLocked    Float?
+    unlockDate    BigInt?
+
+    @@id([timestamp, mint, market_pubkey])
+    @@index([mint, timestamp(sort: Desc)])
+}
+
+model Insider_Graph {
+    timestamp   DateTime @default(now()) @db.Timestamptz
+    mint        String   @db.Text
+    node_id     String   @db.Text
+    participant Boolean?
+    holdings    BigInt?
+    edge_source String?  @db.Text
+    edge_target String?  @db.Text
+
+    @@id([timestamp, mint, node_id])
+}
+
+model Alert {
+    id          String    @id @default(cuid()) // Unique ID for the alert
+    userEmail   String // Email address to send notification to
+    mint        String    @db.Text // The specific token mint address the alert monitors
+    parameter   String // The field to monitor (e.g., "totalMarketLiquidity", "price")
+    comparison  String // How to compare? e.g., "GREATER_THAN", "LESS_THAN", "EQUALS"
+    threshold   Float // The value to compare against
+    isActive    Boolean   @default(true) // Is the alert currently active?
+    triggeredAt DateTime? // Timestamp when the alert condition was last met and notification sent
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+
+    // Constraint: Enforce only one active alert per userEmail for the MVP
+    @@unique([userEmail], name: "unique_active_alert_per_user")
+    // Index to efficiently find active, untriggered alerts for a specific mint and parameter
+    @@index([mint, parameter, isActive, triggeredAt])
+}
