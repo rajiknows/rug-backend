@@ -2,6 +2,7 @@
 import { Context } from "hono";
 import { getPrisma } from "../prisma";
 import { PrismaClient, Token_Metrics } from "@prisma/client"; // Import PrismaClient and generated types
+import { Worker } from "bullmq";
 
 // --- Placeholder for Email Sending ---
 // In a real app, you'd use a service like SendGrid, Mailgun, AWS SES, etc.
@@ -162,12 +163,217 @@ async function checkAlerts(
     }
 }
 // --- End Alert Checking Function ---
+//
+
+const worker = new Worker(
+    "tokenupdate",
+    async (job) => {
+        const tx = getPrisma(job.data.dbUrl);
+        const mints = job.data.mints; // Array of mints to process
+        console.log(`[worker] Processing mints: ${mints.join(", ")}`);
+
+        for (const mint in mints) {
+            try {
+                const lastupdate = await tx.token_Metrics.findFirst({
+                    where: {
+                        mint: mint,
+                    },
+                    orderBy: {
+                        timestamp: "desc",
+                    },
+                    select: {
+                        timestamp: true,
+                    },
+                });
+
+                const reportResponse = await fetch(
+                    `https://api.rugcheck.xyz/v1/tokens/${mint}/report`,
+                );
+                const report = await reportResponse.json();
+
+                // "detectedAt": "2025-04-03T01:51:58.882335507Z",
+                if (
+                    lastupdate &&
+                    report.detectedAt &&
+                    new Date(report.detectedAt).getTime() <=
+                        lastupdate.timestamp.getTime()
+                ) {
+                    console.log(
+                        `[worker] ${mint} already updated at ${lastupdate.timestamp}`,
+                    );
+                    continue;
+                }
+
+                const [priceRes, votesRes, insiderGraphRes] = await Promise.all(
+                    [
+                        fetch(`https://data.fluxbeam.xyz/tokens/${mint}/price`),
+                        fetch(
+                            `https://api.rugcheck.xyz/v1/tokens/${mint}/votes`,
+                        ),
+                        fetch(
+                            `https://api.rugcheck.xyz/v1/tokens/${mint}/insiders/graph`,
+                        ),
+                    ],
+                );
+
+                if (!reportRes.ok)
+                    throw new Error(
+                        `Report fetch failed: ${await reportRes.text()}`,
+                    );
+                if (!priceRes.ok)
+                    throw new Error(
+                        `Price fetch failed: ${await priceRes.text()}`,
+                    );
+                if (!votesRes.ok)
+                    throw new Error(
+                        `Votes fetch failed: ${await votesRes.text()}`,
+                    );
+                if (!insiderGraphRes.ok)
+                    throw new Error(
+                        `Insider Graph fetch failed: ${await insiderGraphRes.text()}`,
+                    );
+
+                const [price, votes, insiderGraph] = await Promise.all([
+                    priceRes.json(),
+                    votesRes.json(),
+                    insiderGraphRes.json(),
+                ]);
+
+                console.timeEnd(`API Fetch for ${mint}`);
+
+                console.time(`DB Transaction for ${mint}`);
+                const transactionTimestamp = new Date();
+
+                await prisma.$transaction(async (tx) => {
+                    const tokenMetricsData = {
+                        timestamp: transactionTimestamp,
+                        mint,
+                        price: price as number,
+                        totalMarketLiquidity: report.totalMarketLiquidity,
+                        totalHolders: report.totalHolders,
+                        score: report.score,
+                        score_normalised: report.score_normalised,
+                        upvotes: votes.up,
+                        downvotes: votes.down,
+                    };
+
+                    latestMetricsRecord = await tx.token_Metrics.create({
+                        data: tokenMetricsData,
+                    });
+                    console.log(`Token Metrics Created for ${mint}`);
+
+                    await Promise.all([
+                        tx.holder_Movements
+                            .createMany({
+                                data: report.topHolders
+                                    .slice(0, 5)
+                                    .map((holder: any) => ({
+                                        timestamp: transactionTimestamp,
+                                        mint,
+                                        address: holder.address,
+                                        amount: holder.amount,
+                                        pct: holder.pct,
+                                        insider: holder.insider,
+                                    })),
+                            })
+                            .then(() =>
+                                console.log(
+                                    `Holder Movements Created for ${mint}`,
+                                ),
+                            ),
+
+                        tx.liquidity_Events
+                            .create({
+                                data: {
+                                    timestamp: transactionTimestamp,
+                                    mint,
+                                    market_pubkey: report.markets[0].pubkey,
+                                    lpLocked: report.markets[0].lp.lpLocked,
+                                    lpLockedPct:
+                                        report.markets[0].lp.lpLockedPct,
+                                    usdcLocked:
+                                        (Object.values(report.lockers)[0] || {})
+                                            .usdcLocked || 0,
+                                    unlockDate:
+                                        (Object.values(report.lockers)[0] || {})
+                                            .unlockDate || 0,
+                                },
+                            })
+                            .then(() =>
+                                console.log(
+                                    `Liquidity Events Created for ${mint}`,
+                                ),
+                            ),
+
+                        tx.insider_Graph
+                            .createMany({
+                                data: insiderGraph
+                                    .flatMap(
+                                        (network: any) => network.nodes || [],
+                                    )
+                                    .slice(0, 25)
+                                    .map((node: any) => ({
+                                        timestamp: transactionTimestamp,
+                                        mint,
+                                        node_id: node.id,
+                                        participant: node.participant,
+                                        holdings: node.holdings,
+                                    })),
+                            })
+                            .then(() =>
+                                console.log(
+                                    `Insider Graph Created for ${mint}`,
+                                ),
+                            ),
+                    ]);
+                });
+                console.timeEnd(`DB Transaction for ${mint}`);
+
+                console.time(`Alert Check for ${mint}`);
+                await checkAlerts(prisma, mint, latestMetricsRecord);
+                console.timeEnd(`Alert Check for ${mint}`);
+            } catch (error) {
+                console.error(`Error processing mint ${mint}:`, error);
+            }
+        }
+        return { status: "completed" };
+    },
+    { connection: redisConnection },
+);
+
+worker.on("failed", (job, err) => {
+    console.error(
+        `[Worker] Job failed for mints ${job.data.mints.join(", ")}: ${err.message}`,
+    );
+});
 
 export async function dbupdate(
     c: Context<{ Bindings: { DATABASE_URL: string } }>,
 ) {
     const prisma = getPrisma(c.env.DATABASE_URL);
-    const mint = "6eVpGi4e3AA1fyN8r9oTMAQKUGjSh168jv1h295Ax1Qg"; // Hardcoded Mint
+    const tokens = [
+        "6eVpGi4e3AA1fyN8r9oTMAQKUGjSh168jv1h295Ax1Qg", // blackshibad
+        // Add more tokens as needed
+    ];
+
+    const batchSize = 10;
+    const batches = [];
+
+    for (let i = 0; i < tokens.length; i += batchSize) {
+        const batch = tokens.slice(i, i + batchSize);
+        batches.push(batch);
+    }
+
+    // Add batches to the queue
+    for (const batch of batches) {
+        await tokenQueue.add(
+            "tokenBatch",
+            { mints: batch },
+            { attempts: 3, backoff: 5000 },
+        );
+    }
+
+    return c.text("Batches queued for processing");
 
     let latestMetricsRecord: Token_Metrics | null = null; // To store the newly inserted metrics
 
@@ -306,15 +512,3 @@ export async function dbupdate(
         // await prisma.$disconnect();
     }
 }
-
-// Your Hono app setup remains the same
-import { Hono } from "hono";
-// Remove duplicate import: import { getPrisma } from "./prisma";
-// Remove duplicate import: import { env } from "hono/adapter";
-// Remove duplicate import: import { dbupdate } from "./cronjobs";
-
-const app = new Hono<{ Bindings: { DATABASE_URL: string } }>();
-
-app.get("/", (c) => c.text("RugCheck Backend is running!"));
-app.get("/cron/poll", dbupdate);
-export default app;
