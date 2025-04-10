@@ -1,4 +1,15 @@
 // types.ts
+//
+// Define the structure of your Cloudflare environment variables
+export interface Env {
+    DATABASE_URL: string;
+    REDIS_HOST: string;
+    REDIS_PORT: string;
+    REDIS_PASSWORD?: string; // Optional if password might be empty
+
+    // Add other bindings like KV namespaces, Durable Objects, etc. if you use them
+    // MY_KV_NAMESPACE: KVNamespace;
+}
 
 // Price Endpoint
 export interface PriceResponse {

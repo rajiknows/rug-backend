@@ -61,19 +61,25 @@ model Insider_Graph {
 }
 
 model Alert {
-    id          String    @id @default(cuid()) // Unique ID for the alert
+    id          String     @id @default(cuid()) // Unique ID for the alert
     userEmail   String // Email address to send notification to
-    mint        String    @db.Text // The specific token mint address the alert monitors
+    mint        String     @db.Text // The specific token mint address the alert monitors
     parameter   String // The field to monitor (e.g., "totalMarketLiquidity", "price")
-    comparison  String // How to compare? e.g., "GREATER_THAN", "LESS_THAN", "EQUALS"
+    comparison  Comparison // How to compare? e.g., "GREATER_THAN", "LESS_THAN", "EQUALS"
     threshold   Float // The value to compare against
-    isActive    Boolean   @default(true) // Is the alert currently active?
+    isActive    Boolean    @default(true) // Is the alert currently active?
     triggeredAt DateTime? // Timestamp when the alert condition was last met and notification sent
-    createdAt   DateTime  @default(now())
-    updatedAt   DateTime  @updatedAt
+    createdAt   DateTime   @default(now())
+    updatedAt   DateTime   @updatedAt
 
     // Constraint: Enforce only one active alert per userEmail for the MVP
     @@unique([userEmail], name: "unique_active_alert_per_user")
     // Index to efficiently find active, untriggered alerts for a specific mint and parameter
     @@index([mint, parameter, isActive, triggeredAt])
+}
+
+enum Comparison {
+    GREATER_THAN
+    LESS_THAN
+    EQUALS
 }
