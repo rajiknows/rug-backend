@@ -4,14 +4,18 @@ import { CACHE_DURATION_MS, CacheEntry, ReportSummary } from "./consts";
 
 const DEFAULT_LIMIT = 100;
 
-const reportSummaryCache = new Map<string, CacheEntry<ReportSummary>>();
+interface ReportSummaryWithVotes extends ReportSummary {
+    upvotes?: number | null;
+    downvotes?: number | null;
+}
+const reportSummaryCache = new Map<string, CacheEntry<ReportSummaryWithVotes>>();
+
 export const getSummary = async (c: Context) => {
     const mint = c.req.param("mint");
     if (!mint) {
         return c.json({ error: "Mint address is required" }, 400);
     }
 
-    // Check cache first
     const cached = reportSummaryCache.get(mint);
     if (cached && cached.expiry > Date.now()) {
         console.log(`[Cache] HIT for report summary: ${mint}`);
@@ -20,42 +24,51 @@ export const getSummary = async (c: Context) => {
     console.log(`[Cache] MISS for report summary: ${mint}`);
 
     const reportUrl = `https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`;
+    const prisma = getPrisma(c.env.DATABASE_URL);
 
     try {
-        const response = await fetch(reportUrl, {
-            headers: { accept: "application/json" },
-        });
+        const [summaryResponse, latestVotes] = await Promise.all([
+            fetch(reportUrl, { headers: { accept: "application/json" } }),
+            prisma.token_Metrics.findFirst({
+                where: { mint: mint },
+                select: { upvotes: true, downvotes: true },
+                orderBy: { timestamp: "desc" },
+            })
+        ]);
 
-        if (!response.ok) {
+        if (!summaryResponse.ok) {
             console.error(
-                `Failed to fetch report summary for ${mint}: ${response.status} ${response.statusText}`,
+                `Failed to fetch report summary for ${mint}: ${summaryResponse.status} ${summaryResponse.statusText}`,
             );
-            // Don't cache errors unless desired
-
             return c.json(
                 {
-                    error: `Failed to fetch report summary: ${response.statusText}`,
+                    error: `Failed to fetch report summary: ${summaryResponse.statusText}`,
                 },
-                500,
+                // summaryResponse.status,
             );
         }
 
-        const data = await response.json();
-        if (!data) {
-            return c.json({ error: "Failed to fetch report summary" }, 500);
+        const summaryData = await summaryResponse.json();
+        if (!summaryData) {
+            return c.json({ error: "Failed to parse report summary" }, 500);
         }
 
-        // Store in cache
+        const responseData: ReportSummaryWithVotes = {
+            ...(summaryData as ReportSummary),
+            upvotes: latestVotes?.upvotes ?? null,
+            downvotes: latestVotes?.downvotes ?? null,
+        };
+
         reportSummaryCache.set(mint, {
-            data: data as ReportSummary,
+            data: responseData,
             expiry: Date.now() + CACHE_DURATION_MS,
         });
 
-        return c.json(data);
+        return c.json(responseData);
     } catch (error) {
-        console.error(`Error fetching report summary for ${mint}:`, error);
+        console.error(`Error fetching combined summary/votes for ${mint}:`, error);
         return c.json(
-            { error: "Internal server error while fetching report summary" },
+            { error: "Internal server error while fetching report summary or votes" },
             500,
         );
     }

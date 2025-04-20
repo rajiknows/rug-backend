@@ -19,9 +19,8 @@ binding = "TOKEN_UPDATE_QUEUE" # This MUST match the binding name used in Env an
 
 # Add the consumer configuration for the queue
 [[queues.consumers]]
-queue = "token-update-batches"  # MUST match the producer queue name
-max_batch_size = 10          # Process up to 10 messages per batch
-max_wait_time_ms = 1000      # Wait up to 1 second for a full batch
+queue = "token-update-batches" # MUST match the producer queue name
+max_batch_size = 10            # Process up to 10 messages per batch
 
 [triggers]
 crons = ["*/2 * * * *"] # Every 2 minutes

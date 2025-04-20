@@ -427,7 +427,6 @@ async function getTokensToMonitor(prisma: PrismaClient | Prisma.TransactionClien
 // --- Function to Queue Token Batches (Using Cloudflare Queues) ---
 export async function queueTokenUpdateJobs(
     env: Env, // Env contains the Queue binding
-    // Remove _redis parameter
 ): Promise<number> {
     // Remove queueName and connection setup for BullMQ
     const prisma = getPrisma(env.DATABASE_URL);

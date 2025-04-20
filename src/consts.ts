@@ -1,5 +1,4 @@
 // --- Simple In-Memory Cache for Report Summary ---
-// NOTE: For production, consider a more robust solution like Redis or Memcached.
 export interface ReportSummary {
     // Define the structure based on the actual API response
     [key: string]: unknown;
