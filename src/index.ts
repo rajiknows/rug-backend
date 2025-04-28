@@ -82,7 +82,7 @@ async function processRedisQueue(env: Env): Promise<void> {
 
         // Fetch up to maxBatchSize messages from Redis
         for (let i = 0; i < maxBatchSize; i++) {
-            const message = await redis.rpop("token_update_queue");
+            const message = await redis.rpop("token_update_batches");
             if (!message) break;
             try {
                 messages.push(JSON.parse(message));

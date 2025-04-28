@@ -437,9 +437,7 @@ export async function queueTokenUpdateJobs(env: Env): Promise<number> {
         return 0;
     }
 
-    const redis = new Redis(env.UPSTASH_REDIS_REST_URL, {
-        password: env.UPSTASH_REDIS_REST_TOKEN,
-    });
+    const redis = new Redis(env.UPSTASH_REDIS_REST_URL);
 
     const tokens = await getTokensToMonitor(
         prisma as any as PrismaClient | Prisma.TransactionClient,
@@ -465,7 +463,7 @@ export async function queueTokenUpdateJobs(env: Env): Promise<number> {
             `[Queueing] Sending ${messagesToSend.length} messages (batches) to Redis queue...`,
         );
         for (const message of messagesToSend) {
-            await redis.lpush("token_update_queue", JSON.stringify(message));
+            await redis.lpush("token_update_batches", JSON.stringify(message));
         }
         batchesQueued = messagesToSend.length;
         console.log(
