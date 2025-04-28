@@ -3,24 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2025-04-06"
 compatibility_flags = ["nodejs_compat"]
 
-[env.production]
-[env.production.vars]
-DATABASE_URL = "prisma+postgres://accelerate.prisma-data.net/?api_key=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcGlfa2V5IjoiZTMzZGJiMDQtZGRmMi00ZTc4LWExZGEtYmJjODc2OTU3ZTQ5IiwidGVuYW50X2lkIjoiZjNkMmNlNGZjZjk2NTgwMTczNDdiMTUwYjUzMWVlOGUyNzNkZmJkNjY0NGYzNTlmZGZhMzJiN2VkMDQ3N2ZiZSIsImludGVybmFsX3NlY3JldCI6IjU3ZTRiOTE2LTQ4YjgtNDkxYy05MGM2LWI2MWZiMWZiYTNmMiJ9.t8ybWXAC1CQwJJLWhzF5cuEFzewN_gGWWGLlyFv3HZ4"
-# DATABASE_URL = "postgres://postgres:password@localhost:5432/postgres"
-# REDIS_HOST = "https://assured-marten-22563.upstash.io" # Use local Redis for dev
-# REDIS_PORT = "6379"
-# REDIS_PASSWORD = ""                                    # Leave blank if no password
-UPSTASH_REDIS_REST_URL = "https://assured-marten-22563.upstash.io"
-UPSTASH_REDIS_REST_TOKEN = "AVgjAAIjcDE4MjM0YjUwNjlhMDM0MDVlOTFkODY2NmQzYmQyNzZlNXAxMA"
-
 [[queues.producers]]
-queue = "token-update-batches" # Or your chosen queue name
-binding = "TOKEN_UPDATE_QUEUE" # This MUST match the binding name used in Env and code
+queue = "token-update-batches" # queue name
+binding = "TOKEN_UPDATE_QUEUE" #match the binding name used in env and code
 
-# Add the consumer configuration for the queue
+#consumer configuration for the queue
 [[queues.consumers]]
-queue = "token-update-batches" # MUST match the producer queue name
-max_batch_size = 10            # Process up to 10 messages per batch
+queue = "token-update-batches" # matches the producer queue name
+max_batch_size = 10
 
 [triggers]
-crons = ["*/2 * * * *"] # Every 2 minutes
+crons = ["*/10 * * * *"] # triggers every 10 minutes

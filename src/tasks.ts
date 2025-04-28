@@ -5,13 +5,8 @@ import {
     Comparison as ComparisonType,
     Prisma,
 } from "@prisma/client";
-// import { Job, Queue } from "bullmq";
-// import type { RedisOptions } from "ioredis";
 import { getPrisma } from "./prisma";
-// import type { Env } from "./types"; // Env will be passed differently to processTokenBatch
-import type { Env, TokenBatchMessage } from "./types"; // Import TokenBatchMessage
-// import { Redis } from "@upstash/redis";
-// import { testUpstashConnection } from "./test-upstach-redis"; // Remove test import
+import type { Env, TokenBatchMessage } from "./types";
 
 // --- Placeholder for Email Sending ---
 async function sendEmail(
@@ -27,7 +22,6 @@ async function sendEmail(
     await new Promise((resolve) => setTimeout(resolve, 50)); // Simulate async operation
     return true;
 }
-// --- End Placeholder ---
 
 // --- Alert Checking Function ---
 async function checkAlerts(
@@ -45,7 +39,6 @@ async function checkAlerts(
 
     const alertsToCheck = await prisma.alert.findMany({
         where: { mint, isActive: true, triggeredAt: null },
-        // Removed include: { token: true } since no Token relation exists
     });
 
     if (alertsToCheck.length === 0) {
@@ -115,7 +108,7 @@ async function checkAlerts(
 
             emailPromises.push(
                 (async () => {
-                    const tokenSymbol = alert.mint; // Use mint as fallback since no Token model
+                    const tokenSymbol = alert.mint;
                     const subject = `🚀 Alert Triggered for ${tokenSymbol}!`;
                     const body = `Your alert condition was met:\n\nToken: ${alert.mint}\nSymbol: ${tokenSymbol}\nParameter: ${alert.parameter}\nCondition: ${alert.comparison.replace("_", " ")} ${alert.threshold}\nCurrent Value: ${currentValue}\n\nThis alert will not trigger again unless reset.`;
                     try {
@@ -172,25 +165,25 @@ async function checkAlerts(
     console.log(`[Alert Check] Finished processing alerts for mint: ${mint}`);
 }
 
-// --- Worker Processing Function (now called by Queue handler) ---
-// Needs env for DB connection, and the message batch
 export async function processTokenBatch(
     batch: MessageBatch<TokenBatchMessage>,
     env: Env,
-): Promise<void> { // Return void, Queue handler manages success/failure
-    console.log(`[Queue Worker] Received batch with ${batch.messages.length} messages.`);
+): Promise<void> {
+    console.log(
+        `[Queue Worker] Received batch with ${batch.messages.length} messages.`,
+    );
 
     for (const message of batch.messages) {
         const prisma = getPrisma(env.DATABASE_URL);
-        const mints: string[] = message.body.mints; // Access mints from message body
+        const mints: string[] = message.body.mints;
         const messageId = message.id;
         console.log(
             `[Queue Worker] Processing message ${messageId} for mints: ${mints.join(", ")}`,
         );
 
-        // Process each mint within the message batch
         for (const mint of mints) {
             try {
+                /// we do this optimisation to reduce the writes in the db , if the data is unchanged we wont need to update the db
                 const lastUpdate = await prisma.token_Metrics.findFirst({
                     where: { mint },
                     orderBy: { timestamp: "desc" },
@@ -205,7 +198,7 @@ export async function processTokenBatch(
                         `Report fetch failed (${reportResponse.status}): ${await reportResponse.text()}`,
                     );
                 }
-                const report: any = await reportResponse.json(); // Using any due to noImplicitAny:false
+                const report: any = await reportResponse.json();
 
                 if (
                     lastUpdate &&
@@ -222,16 +215,19 @@ export async function processTokenBatch(
                     console.warn(
                         `[Worker] Mint ${mint} has no market data in report. Skipping liquidity/lock info.`,
                     );
-                    // continue; // Uncomment to skip mint entirely if no market data
                 }
 
-                const [priceRes, votesRes, insiderGraphRes] = await Promise.all([
-                    fetch(`https://data.fluxbeam.xyz/tokens/${mint}/price`),
-                    fetch(`https://api.rugcheck.xyz/v1/tokens/${mint}/votes`),
-                    fetch(
-                        `https://api.rugcheck.xyz/v1/tokens/${mint}/insiders/graph`,
-                    ),
-                ]);
+                const [priceRes, votesRes, insiderGraphRes] = await Promise.all(
+                    [
+                        fetch(`https://data.fluxbeam.xyz/tokens/${mint}/price`),
+                        fetch(
+                            `https://api.rugcheck.xyz/v1/tokens/${mint}/votes`,
+                        ),
+                        fetch(
+                            `https://api.rugcheck.xyz/v1/tokens/${mint}/insiders/graph`,
+                        ),
+                    ],
+                );
 
                 if (!priceRes.ok)
                     throw new Error(
@@ -246,7 +242,11 @@ export async function processTokenBatch(
                         `Insider Graph fetch failed (${insiderGraphRes.status}): ${await insiderGraphRes.text()}`,
                     );
 
-                const [priceData, votesData, insiderGraphData]: [any, any, any] = await Promise.all([
+                const [priceData, votesData, insiderGraphData]: [
+                    any,
+                    any,
+                    any,
+                ] = await Promise.all([
                     priceRes.json(),
                     votesRes.json(),
                     insiderGraphRes.json(),
@@ -311,9 +311,11 @@ export async function processTokenBatch(
                           }
                         : null;
 
-                    const networks = Array.isArray(insiderGraphData) ? insiderGraphData : [];
+                    const networks = Array.isArray(insiderGraphData)
+                        ? insiderGraphData
+                        : [];
                     const insiderGraphNodes = networks
-                        .flatMap((network: any) => network.nodes || []) 
+                        .flatMap((network: any) => network.nodes || [])
                         .slice(0, 25)
                         .map((node: any) => ({
                             timestamp: transactionTimestamp,
@@ -321,97 +323,99 @@ export async function processTokenBatch(
                             node_id: node.id,
                             participant: node.participant ?? "unknown",
                             holdings: node.holdings ?? 0,
-                         }));
+                        }));
 
-                    const creationPromises:Promise<void>[] = [];
+                    const creationPromises: Promise<void>[] = [];
 
                     if (holderMovementsData.length > 0) {
                         creationPromises.push(
                             tx.holder_Movements
                                 .createMany({ data: holderMovementsData })
                                 .then(() =>
-                                     console.log(
+                                    console.log(
                                         `[Worker] Holder Movements Created for ${mint}`,
-                                     ),
-                                 )
+                                    ),
+                                )
                                 .catch((e) =>
-                                     console.error(
+                                    console.error(
                                         `[Worker] Error creating Holder Movements for ${mint}:`,
-                                         e,
-                                     ),
-                                 ),
-                         );
-                     }
+                                        e,
+                                    ),
+                                ),
+                        );
+                    }
 
-                     if (liquidityEventData) {
-                         creationPromises.push(
-                             tx.liquidity_Events
-                                 .create({ data: liquidityEventData })
-                                 .then(() =>
-                                     console.log(
+                    if (liquidityEventData) {
+                        creationPromises.push(
+                            tx.liquidity_Events
+                                .create({ data: liquidityEventData })
+                                .then(() =>
+                                    console.log(
                                         `[Worker] Liquidity Event Created for ${mint}`,
-                                     ),
-                                 )
-                                 .catch((e) =>
-                                     console.error(
+                                    ),
+                                )
+                                .catch((e) =>
+                                    console.error(
                                         `[Worker] Error creating Liquidity Event for ${mint}:`,
-                                         e,
-                                     ),
-                                 ),
-                         );
-                     }
+                                        e,
+                                    ),
+                                ),
+                        );
+                    }
 
-                     if (insiderGraphNodes.length > 0) {
-                         creationPromises.push(
-                             tx.insider_Graph
-                                 .createMany({ data: insiderGraphNodes })
-                                 .then(() =>
-                                     console.log(
+                    if (insiderGraphNodes.length > 0) {
+                        creationPromises.push(
+                            tx.insider_Graph
+                                .createMany({ data: insiderGraphNodes })
+                                .then(() =>
+                                    console.log(
                                         `[Worker] Insider Graph Nodes Created for ${mint}`,
-                                     ),
-                                 )
-                                 .catch((e) =>
-                                     console.error(
+                                    ),
+                                )
+                                .catch((e) =>
+                                    console.error(
                                         `[Worker] Error creating Insider Graph Nodes for ${mint}:`,
-                                         e,
-                                     ),
-                                 ),
-                         );
-                     }
+                                        e,
+                                    ),
+                                ),
+                        );
+                    }
 
                     await Promise.all(creationPromises);
 
-                    await checkAlerts(tx as any as (PrismaClient | Prisma.TransactionClient), mint, createdMetrics);
-                 });
+                    await checkAlerts(
+                        tx as any as PrismaClient | Prisma.TransactionClient,
+                        mint,
+                        createdMetrics,
+                    );
+                });
 
-                console.log(`[Queue Worker] Successfully processed mint ${mint} in message ${messageId}`);
-            } catch (error: any) { // Catch errors for individual mints
+                console.log(
+                    `[Queue Worker] Successfully processed mint ${mint} in message ${messageId}`,
+                );
+            } catch (error: any) {
                 console.error(
                     `[Queue Worker] Error processing mint ${mint} in message ${messageId}:`,
                     error.message,
                     error.stack,
                 );
-                // Optionally rethrow or handle differently if needed
             }
-        } // End loop for mints within a message
-        
-        // Mark the individual message as processed successfully *after* all its mints are attempted
-        // The queue handler in index.ts will manage retries/failures based on this function's overall success/failure
-        // For simplicity now, we assume success if we reach here without throwing
-         console.log(`[Queue Worker] Finished processing message ${messageId}.`);
+        }
 
-    } // End loop for messages in batch
+        console.log(`[Queue Worker] Finished processing message ${messageId}.`);
+    }
 
     console.log(`[Queue Worker] Finished processing batch.`);
-    // CF Queue handler manages ack/retry based on whether this function throws
-    // To retry the whole batch, throw an error here.
-    // To retry individual messages, use message.retry() - more complex setup needed
 }
 
-// --- Helper to fetch tokens ---
-async function getTokensToMonitor(prisma: PrismaClient | Prisma.TransactionClient): Promise<string[]> {
+async function getTokensToMonitor(
+    prisma: PrismaClient | Prisma.TransactionClient,
+): Promise<string[]> {
     console.log("[Queueing] Fetching tokens to monitor...");
-    // TODO: Replace hardcoded mints with actual logic (e.g., querying alerts)
+    // TODO: Replace hardcoded mints by querying the api for getting tokens
+    //
+    // for now we have a hardcoded list of tokens to monitor(mvp limitations otherwise,
+    // we will overuse the cloudflare workers and i will be charged with hefty $ bills)
     const mints = [
         "6eVpGi4e3AA1fyN8r9oTMAQKUGjSh168jv1h295Ax1Qg",
         "DX1JSMFtirJmxWoLjSLvTYXSUfG5EELn638vA7pgJNGL",
@@ -424,14 +428,14 @@ async function getTokensToMonitor(prisma: PrismaClient | Prisma.TransactionClien
     return mints;
 }
 
-// --- Function to Queue Token Batches (Using Cloudflare Queues) ---
-export async function queueTokenUpdateJobs(
-    env: Env, // Env contains the Queue binding
-): Promise<number> {
+// Function to Queue Token Batches (Using Cloudflare Queues)
+export async function queueTokenUpdateJobs(env: Env): Promise<number> {
     // Remove queueName and connection setup for BullMQ
     const prisma = getPrisma(env.DATABASE_URL);
 
-    const tokens = await getTokensToMonitor(prisma as any as (PrismaClient | Prisma.TransactionClient));
+    const tokens = await getTokensToMonitor(
+        prisma as any as PrismaClient | Prisma.TransactionClient,
+    );
 
     if (tokens.length === 0) {
         console.log("[Queueing] No tokens found to queue. Exiting.");
@@ -448,23 +452,23 @@ export async function queueTokenUpdateJobs(
     }
 
     try {
-        console.log(`[Queueing] Sending ${messagesToSend.length} messages (batches) to queue...`);
+        console.log(
+            `[Queueing] Sending ${messagesToSend.length} messages (batches) to queue...`,
+        );
         // Map messages to the format required by sendBatch: { body: YourMessageType }
-        const messagesToSendRequest = messagesToSend.map(msg => ({ body: msg }));
+        const messagesToSendRequest = messagesToSend.map((msg) => ({
+            body: msg,
+        }));
         // Send messages in batches using sendBatch
         await env.TOKEN_UPDATE_QUEUE.sendBatch(messagesToSendRequest);
         batchesQueued = messagesToSend.length;
-        console.log(`[Queueing] Successfully sent ${batchesQueued} batches to the queue.`);
-    } catch (error) {
-        console.error(
-            `[Queueing] Failed to send batches to queue:`, // Updated log message
-            error,
+        console.log(
+            `[Queueing] Successfully sent ${batchesQueued} batches to the queue.`,
         );
-        // Re-throw or handle as needed
+    } catch (error) {
+        console.error(`[Queueing] Failed to send batches to queue:`, error);
         throw error;
     }
-
-    // Remove BullMQ logging
     console.log(`[Queueing] Finished queueing job.`);
     return batchesQueued;
 }

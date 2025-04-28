@@ -1,36 +1,27 @@
-// types.ts
-//
-// Define the structure of your Cloudflare environment variables
 export interface Env {
     DATABASE_URL: string;
-    UPSTASH_REDIS_REST_URL?: string; // Optional for Upstash Redis
-    UPSTASH_REDIS_REST_TOKEN?: string; // Optional for Upstash Redis
-
-    // Queue binding
+    UPSTASH_REDIS_REST_URL?: string;
+    UPSTASH_REDIS_REST_TOKEN?: string;
     TOKEN_UPDATE_QUEUE: Queue<TokenBatchMessage>;
-
-    // Add other bindings like KV namespaces, Durable Objects, etc. if you use them
-    // MY_KV_NAMESPACE: KVNamespace;
 }
 
-// --- Message type for the queue ---
+// message type for the queue
 export interface TokenBatchMessage {
     mints: string[];
 }
 
-// Price Endpoint
+/// here i wrote the interfaces for responses from the api spec
+
 export interface PriceResponse {
     price: number;
 }
 
-// Votes Endpoint (ignoring userVoted)
 export interface VotesResponse {
     up: number;
     down: number;
     userVoted: boolean;
 }
 
-// Report Endpoint
 export interface TokenAccount {
     mintAuthority: string | null;
     supply: string;

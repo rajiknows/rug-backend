@@ -8,7 +8,10 @@ interface ReportSummaryWithVotes extends ReportSummary {
     upvotes?: number | null;
     downvotes?: number | null;
 }
-const reportSummaryCache = new Map<string, CacheEntry<ReportSummaryWithVotes>>();
+const reportSummaryCache = new Map<
+    string,
+    CacheEntry<ReportSummaryWithVotes>
+>();
 
 export const getSummary = async (c: Context) => {
     const mint = c.req.param("mint");
@@ -33,19 +36,16 @@ export const getSummary = async (c: Context) => {
                 where: { mint: mint },
                 select: { upvotes: true, downvotes: true },
                 orderBy: { timestamp: "desc" },
-            })
+            }),
         ]);
 
         if (!summaryResponse.ok) {
             console.error(
                 `Failed to fetch report summary for ${mint}: ${summaryResponse.status} ${summaryResponse.statusText}`,
             );
-            return c.json(
-                {
-                    error: `Failed to fetch report summary: ${summaryResponse.statusText}`,
-                },
-                // summaryResponse.status,
-            );
+            return c.json({
+                error: `Failed to fetch report summary: ${summaryResponse.statusText}`,
+            });
         }
 
         const summaryData = await summaryResponse.json();
@@ -66,9 +66,14 @@ export const getSummary = async (c: Context) => {
 
         return c.json(responseData);
     } catch (error) {
-        console.error(`Error fetching combined summary/votes for ${mint}:`, error);
+        console.error(
+            `Error fetching combined summary/votes for ${mint}:`,
+            error,
+        );
         return c.json(
-            { error: "Internal server error while fetching report summary or votes" },
+            {
+                error: "Internal server error while fetching report summary or votes",
+            },
             500,
         );
     }
