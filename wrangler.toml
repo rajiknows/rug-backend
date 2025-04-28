@@ -3,14 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2025-04-06"
 compatibility_flags = ["nodejs_compat"]
 
-[[queues.producers]]
-queue = "token-update-batches" # queue name
-binding = "TOKEN_UPDATE_QUEUE" #match the binding name used in env and code
+# [[queues.producers]]
+# queue = "token-update-batches" # queue name
+# binding = "TOKEN_UPDATE_QUEUE" #match the binding name used in env and code
 
-#consumer configuration for the queue
-[[queues.consumers]]
-queue = "token-update-batches" # matches the producer queue name
-max_batch_size = 10
+# #consumer configuration for the queue
+# [[queues.consumers]]
+# queue = "token-update-batches" # matches the producer queue name
+# max_batch_size = 10
 
 [triggers]
 crons = ["*/10 * * * *"] # triggers every 10 minutes
