@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { getPrisma } from "./prisma";
 import type { Env, TokenBatchMessage } from "./types";
+import Redis from "ioredis";
 
 // --- Placeholder for Email Sending ---
 async function sendEmail(
@@ -166,19 +167,19 @@ async function checkAlerts(
 }
 
 export async function processTokenBatch(
-    batch: MessageBatch<TokenBatchMessage>,
+    messages: TokenBatchMessage[],
     env: Env,
 ): Promise<void> {
     console.log(
-        `[Queue Worker] Received batch with ${batch.messages.length} messages.`,
+        `[Redis Worker] Processing batch with ${messages.length} messages.`,
     );
 
-    for (const message of batch.messages) {
+    for (const message of messages) {
         const prisma = getPrisma(env.DATABASE_URL);
-        const mints: string[] = message.body.mints;
-        const messageId = message.id;
+        const mints: string[] = message.mints;
+        const messageId = Math.random().toString(36).substring(2); // Simulate message ID
         console.log(
-            `[Queue Worker] Processing message ${messageId} for mints: ${mints.join(", ")}`,
+            `[Redis Worker] Processing message ${messageId} for mints: ${mints.join(", ")}`,
         );
 
         for (const mint of mints) {
@@ -391,21 +392,21 @@ export async function processTokenBatch(
                 });
 
                 console.log(
-                    `[Queue Worker] Successfully processed mint ${mint} in message ${messageId}`,
+                    `[Redis Worker] Successfully processed mint ${mint} in message ${messageId}`,
                 );
             } catch (error: any) {
                 console.error(
-                    `[Queue Worker] Error processing mint ${mint} in message ${messageId}:`,
+                    `[Redis Worker] Error processing mint ${mint} in message ${messageId}:`,
                     error.message,
                     error.stack,
                 );
             }
         }
 
-        console.log(`[Queue Worker] Finished processing message ${messageId}.`);
+        console.log(`[Redis Worker] Finished processing message ${messageId}.`);
     }
 
-    console.log(`[Queue Worker] Finished processing batch.`);
+    console.log(`[Redis Worker] Finished processing batch.`);
 }
 
 async function getTokensToMonitor(
@@ -428,10 +429,17 @@ async function getTokensToMonitor(
     return mints;
 }
 
-// Function to Queue Token Batches (Using Cloudflare Queues)
 export async function queueTokenUpdateJobs(env: Env): Promise<number> {
-    // Remove queueName and connection setup for BullMQ
     const prisma = getPrisma(env.DATABASE_URL);
+
+    if (!env.UPSTASH_REDIS_REST_URL) {
+        console.error("UPSTASH_REDIS_REST_URL is not set");
+        return 0;
+    }
+
+    const redis = new Redis(env.UPSTASH_REDIS_REST_URL, {
+        password: env.UPSTASH_REDIS_REST_TOKEN,
+    });
 
     const tokens = await getTokensToMonitor(
         prisma as any as PrismaClient | Prisma.TransactionClient,
@@ -439,6 +447,7 @@ export async function queueTokenUpdateJobs(env: Env): Promise<number> {
 
     if (tokens.length === 0) {
         console.log("[Queueing] No tokens found to queue. Exiting.");
+        await redis.quit();
         return 0;
     }
 
@@ -453,21 +462,24 @@ export async function queueTokenUpdateJobs(env: Env): Promise<number> {
 
     try {
         console.log(
-            `[Queueing] Sending ${messagesToSend.length} messages (batches) to queue...`,
+            `[Queueing] Sending ${messagesToSend.length} messages (batches) to Redis queue...`,
         );
-        // Map messages to the format required by sendBatch: { body: YourMessageType }
-        const messagesToSendRequest = messagesToSend.map((msg) => ({
-            body: msg,
-        }));
-        // Send messages in batches using sendBatch
-        await env.TOKEN_UPDATE_QUEUE.sendBatch(messagesToSendRequest);
+        for (const message of messagesToSend) {
+            await redis.lpush("token_update_queue", JSON.stringify(message));
+        }
         batchesQueued = messagesToSend.length;
         console.log(
-            `[Queueing] Successfully sent ${batchesQueued} batches to the queue.`,
+            `[Queueing] Successfully sent ${batchesQueued} batches to Redis queue.`,
         );
     } catch (error) {
-        console.error(`[Queueing] Failed to send batches to queue:`, error);
+        console.error(
+            `[Queueing] Failed to send batches to Redis queue:`,
+            error,
+        );
+        await redis.quit();
         throw error;
+    } finally {
+        await redis.quit();
     }
     console.log(`[Queueing] Finished queueing job.`);
     return batchesQueued;

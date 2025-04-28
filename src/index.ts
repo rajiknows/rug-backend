@@ -19,36 +19,29 @@ import {
     getTopHolders,
     getLiquidityLockInfo,
 } from "./tokenomics";
+import Redis from "ioredis";
 
-// --- Initialize Hono App ---
 const app = new Hono<{ Bindings: Env }>();
 
-// --- Middleware ---
+// middleware
 app.use("*", logger());
 app.use("*", cors());
 
-// --- API Routes ---
+// routes
 app.get("/", (c) => c.text("RugCheck Backend API is running!"));
-
-// --- Token alert endpoints ---
 app.post("/alert/new", makeAlert);
 app.get("/alert/get", getAlerts);
 app.delete("/alert/delete", deleteAlert);
 app.put("/alert/update", updateAlert);
 app.get("/alert/getbyuseremail", getAlertByUserEmail);
 app.get("/alert/getbymint", getAlertByMint);
-
-// --- Tokenomics Report Endpoints ---
 app.get("/tokens/:mint/report/summary", getSummary);
-
-// --- Tokenomics Visualization Endpoints ---
 app.get("/tokens/:mint/visualizations/price", getPriceHistory);
 app.get("/tokens/:mint/visualizations/liquidity", getLiquidityHistory);
 app.get("/tokens/:mint/visualizations/holders", getHolderHistory);
 app.get("/tokens/:mint/visualizations/top-holders", getTopHolders);
 app.get("/tokens/:mint/visualizations/liquidity-lock", getLiquidityLockInfo);
 
-// --- Manual Trigger ---
 app.post("/internal/queue-jobs", async (c) => {
     const env = c.env;
     try {
@@ -76,7 +69,40 @@ app.post("/internal/queue-jobs", async (c) => {
     }
 });
 
-// --- Cloudflare Worker Module ---
+// Process Redis Queue
+async function processRedisQueue(env: Env): Promise<void> {
+    if (!env.UPSTASH_REDIS_REST_URL) {
+        console.error("UPSTASH_REDIS_REST_URL is not set");
+        return;
+    }
+    const redis = new Redis(env.UPSTASH_REDIS_REST_URL);
+    try {
+        const maxBatchSize = 10;
+        const messages: TokenBatchMessage[] = [];
+
+        // Fetch up to maxBatchSize messages from Redis
+        for (let i = 0; i < maxBatchSize; i++) {
+            const message = await redis.rpop("token_update_queue");
+            if (!message) break;
+            try {
+                messages.push(JSON.parse(message));
+            } catch (error) {
+                console.error(`[Redis Worker] Error parsing message:`, error);
+            }
+        }
+
+        if (messages.length > 0) {
+            await processTokenBatch(messages, env);
+        } else {
+            console.log(`[Redis Worker] No messages in Redis queue.`);
+        }
+    } catch (error) {
+        console.error(`[Redis Worker] Error processing Redis queue:`, error);
+    } finally {
+        await redis.quit();
+    }
+}
+
 export default {
     async scheduled(
         event: ScheduledEvent,
@@ -87,33 +113,25 @@ export default {
         ctx.waitUntil(
             (async () => {
                 try {
-                    console.log("[Scheduled] Triggering queueTokenUpdateJobs...");
+                    console.log(
+                        "[Scheduled] Triggering queueTokenUpdateJobs...",
+                    );
                     await queueTokenUpdateJobs(env);
                     console.log("[Scheduled] queueTokenUpdateJobs finished.");
+                    console.log("[Scheduled] Processing Redis queue...");
+                    await processRedisQueue(env);
+                    console.log("[Scheduled] Redis queue processing finished.");
                 } catch (error) {
                     console.error(
-                        "[Scheduled] Error triggering queueTokenUpdateJobs:",
+                        "[Scheduled] Error in scheduled task:",
                         error,
                     );
                 }
             })(),
         );
-        console.log("[Scheduled] Handler finished, job queueing running via waitUntil.");
-    },
-
-    async queue(
-        batch: MessageBatch<TokenBatchMessage>,
-        env: Env,
-        ctx: ExecutionContext,
-    ): Promise<void> {
-        console.log(`[Queue Handler] Received batch of size ${batch.messages.length} from queue: ${batch.queue}`);
-        try {
-            await processTokenBatch(batch, env);
-            console.log(`[Queue Handler] Successfully processed batch from queue: ${batch.queue}`);
-        } catch (error) {
-            console.error(`[Queue Handler] Error processing batch from queue ${batch.queue}:`, error);
-            batch.retryAll();
-        }
+        console.log(
+            "[Scheduled] Handler finished, tasks running via waitUntil.",
+        );
     },
 
     fetch: app.fetch,
